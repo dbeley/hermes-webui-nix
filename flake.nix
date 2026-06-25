@@ -25,16 +25,28 @@
         name = s;
         value = f s;
       }) supportedSystems);
+      pkgsFor = system: nixpkgs.legacyPackages.${system};
     in
     {
       packages = forAllSystems (
         system:
         let
-          pkgs = nixpkgs.legacyPackages.${system};
+          pkgs = pkgsFor system;
         in
         {
           hermes-webui = pkgs.callPackage ./pkgs/hermes-webui.nix { };
           default = self.packages.${system}.hermes-webui;
+        }
+      );
+
+      apps = forAllSystems (
+        system:
+        {
+          hermes-webui = {
+            type = "app";
+            program = "${self.packages.${system}.hermes-webui}/bin/hermes-webui";
+          };
+          default = self.apps.${system}.hermes-webui;
         }
       );
 

@@ -9,6 +9,7 @@ NixOS and Home Manager modules for [Hermes WebUI](https://github.com/nesquena/he
 - **Home Manager module**: creates `hermes-webui` and `hermes-gateway` systemd user services, installs the `hermes` CLI
 - Self-contained — brings its own `hermes-agent` via the [llm-agents.nix](https://github.com/numtide/llm-agents.nix) flake input
 - Configurable host, port, password file, and gateway toggle
+- `nix run` support via the `apps` flake output
 
 ## Usage
 
@@ -20,6 +21,8 @@ inputs = {
   hermes-webui-nix = {
     url = "github:dbeley/hermes-webui-nix";
     inputs.nixpkgs.follows = "nixpkgs";
+    # Optional: share the same hermes-agent version across your config
+    inputs.llm-agents.follows = "llm-agents";
   };
 };
 ```
@@ -63,6 +66,50 @@ services.hermes-webui = {
 };
 ```
 
+## Secrets with sops-nix
+
+The `passwordFile` option is designed to work with [sops-nix](https://github.com/Mic92/sops-nix). The password file is read at service startup (not at build time), so the secret never enters the Nix store.
+
+### 1. Add the secret to your sops secrets file
+
+```yaml
+# secrets/secrets.yaml
+hermes-webui-password: ENC[AES256_GCM,data:...,type:str]
+```
+
+### 2. Declare the secret in your sops module
+
+```nix
+# modules/sops/sops.nix (or wherever you manage sops secrets)
+sops.secrets = {
+  hermes-webui-password = {
+    sopsFile = ../../secrets/secrets.yaml;
+    path = "/home/youruser/.config/hermes/webui-password";
+  };
+};
+```
+
+### 3. Reference it in the Home Manager config
+
+```nix
+services.hermes-webui = {
+  enable = true;
+  passwordFile = "$HOME/.config/hermes/webui-password";
+};
+```
+
+The start script reads the file with `$(cat "$HOME/.config/hermes/webui-password")` and exports it as `HERMES_WEBUI_PASSWORD` before launching the server.
+
+## Running ad-hoc
+
+```sh
+# Run the webui directly without installing
+nix run github:dbeley/hermes-webui-nix
+
+# Or from a local checkout
+nix run .
+```
+
 ## Options
 
 ### NixOS module (`services.hermes-webui`)
@@ -93,4 +140,4 @@ The Gateway service runs `hermes gateway run`, which handles scheduled cron jobs
 
 ## License
 
-MIT
+[MIT](LICENSE)
