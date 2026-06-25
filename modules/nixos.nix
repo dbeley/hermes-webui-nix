@@ -63,9 +63,7 @@ in
         Wants = [ "network-online.target" ];
         StartLimitIntervalSec = 0;
       };
-      Install = {
-        WantedBy = [ "default.target" ];
-      };
+      wantedBy = [ "default.target" ];
       Service = {
         Type = "simple";
         Environment = [
