@@ -61,7 +61,6 @@ in
         Description = "Hermes Gateway (cron jobs, messaging)";
         After = [ "network-online.target" ];
         Wants = [ "network-online.target" ];
-        StartLimitIntervalSec = 0;
       };
       wantedBy = [ "default.target" ];
       serviceConfig = {
@@ -70,16 +69,9 @@ in
           "PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:%h/.nix-profile/bin"
           "HERMES_HOME=%h/.hermes"
         ];
-        WorkingDirectory = "%h/.hermes";
         ExecStart = "${cfg.agentPackage}/bin/hermes gateway run";
-        ExecReload = "/bin/kill -USR1 $MAINPID";
         Restart = "always";
         RestartSec = 5;
-        TimeoutStopSec = 210;
-        KillMode = "mixed";
-        KillSignal = "SIGTERM";
-        StandardOutput = "journal";
-        StandardError = "journal";
       };
     };
   };
