@@ -24,6 +24,19 @@ stdenv.mkDerivation (finalAttrs: {
 
   nativeBuildInputs = [ makeWrapper ];
 
+  patchPhase = ''
+    # Fix: the _approval_notify_cb in streaming.py calls submit_gateway_pending_mirror
+    # which creates a "gateway mirror" entry in the pending queue with _GATEWAY_MIRROR_FLAG
+    # and a stabilised token. When the user clicks approve, _handle_approval_respond's
+    # _gateway_pending_approval_without_run_id() sees the mirror, finds no active
+    # gateway run to relay to, and returns HTTP 409 with:
+    #   "Gateway approval could not be relayed because the active run is unavailable."
+    #
+    # The old behaviour (no mirroring) was restored: the callback only pushes the
+    # approval via SSE, which is sufficient for the in-process agent path (legacy mode).
+    sed -i '/if _submit_pending_for_polling is not None:/,/logger.warning(/d' api/streaming.py
+  '';
+
   installPhase = ''
     runHook preInstall
     mkdir -p $out/{bin,share/hermes-webui}
