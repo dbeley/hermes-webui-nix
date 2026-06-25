@@ -29,16 +29,6 @@ in
       description = "TCP port for the WebUI server to listen on.";
     };
 
-    enableGateway = lib.mkOption {
-      type = lib.types.bool;
-      default = true;
-      description = ''
-        Whether to enable the Hermes Gateway service.
-        The gateway handles cron jobs and messaging platform integrations
-        (Telegram, Discord, Slack, etc.).
-      '';
-    };
-
     passwordFile = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
@@ -69,24 +59,6 @@ in
 
   config = lib.mkIf cfg.enable {
     home.packages = [ cfg.agentPackage ];
-
-    systemd.user.services.hermes-gateway = lib.mkIf cfg.enableGateway {
-      Unit = {
-        Description = "Hermes Gateway (cron jobs, messaging)";
-        After = [ "network.target" ];
-      };
-      Install = {
-        WantedBy = [ "default.target" ];
-      };
-      Service = {
-        Environment = [
-          "PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:%h/.nix-profile/bin"
-        ];
-        ExecStart = "${cfg.agentPackage}/bin/hermes gateway run";
-        Restart = "always";
-        RestartSec = 10;
-      };
-    };
 
     systemd.user.services.hermes-webui = {
       Unit = {
