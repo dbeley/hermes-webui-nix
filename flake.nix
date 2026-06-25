@@ -51,8 +51,8 @@
       );
 
       nixosModules = {
-        default = import ./modules/nixos.nix;
-        hermes-webui = import ./modules/nixos.nix;
+        default = import ./modules/nixos.nix { inherit llm-agents; };
+        hermes-webui = import ./modules/nixos.nix { inherit llm-agents; };
       };
 
       homeModules = {
