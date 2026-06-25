@@ -1,0 +1,62 @@
+name: auto-update
+
+on:
+  schedule:
+    # Every Monday at 09:37 UTC — offset from the :00 swarm
+    - cron: "37 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixpkgs-unstable
+
+      - name: Run nix-update
+        run: |
+          nix shell nixpkgs#nix-update -c nix-update \
+            --version \
+            --override-filename pkgs/hermes-webui.nix \
+            --build \
+            --commit \
+            hermes-webui
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if [ -z "$(git diff --name-only HEAD~1 HEAD)" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "commit_msg=$(git log -1 --pretty=%s)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create pull request
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          # The nix-update --commit already committed to the current branch.
+          # Push it and open a PR.
+          git push origin HEAD:refs/heads/auto-update/${{ github.run_id }}
+          gh pr create \
+            --base master \
+            --head auto-update/${{ github.run_id }} \
+            --title "$(git log -1 --pretty=%s)" \
+            --body "Automated version bump created by the weekly auto-update workflow.
+
+          $(git log -1 --pretty=%b)
+
+          ---
+          Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --label "dependencies"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
