@@ -57,14 +57,14 @@ in
     users.users.${cfg.user}.linger = true;
 
     systemd.user.services.hermes-gateway = lib.mkIf cfg.enableGateway {
-      Unit = {
+      unitConfig = {
         Description = "Hermes Gateway (cron jobs, messaging)";
         After = [ "network-online.target" ];
         Wants = [ "network-online.target" ];
         StartLimitIntervalSec = 0;
       };
       wantedBy = [ "default.target" ];
-      Service = {
+      serviceConfig = {
         Type = "simple";
         Environment = [
           "PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:%h/.nix-profile/bin"
