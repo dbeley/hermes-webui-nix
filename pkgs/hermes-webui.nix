@@ -25,16 +25,19 @@ stdenv.mkDerivation (finalAttrs: {
   nativeBuildInputs = [ makeWrapper ];
 
   patchPhase = ''
-    # Fix: the _approval_notify_cb in streaming.py calls submit_gateway_pending_mirror
-    # which creates a "gateway mirror" entry in the pending queue with _GATEWAY_MIRROR_FLAG
-    # and a stabilised token. When the user clicks approve, _handle_approval_respond's
-    # _gateway_pending_approval_without_run_id() sees the mirror, finds no active
-    # gateway run to relay to, and returns HTTP 409 with:
-    #   "Gateway approval could not be relayed because the active run is unavailable."
+    # Fix: approval notify callback must call submit_pending() to add a
+    # non-mirror entry to the _pending queue. Without this, _pending only
+    # gets "gateway mirror" entries (from reconcile_gateway_pending_mirror_locked)
+    # which have _GATEWAY_MIRROR_FLAG set, causing _handle_approval_respond to
+    # return HTTP 409 (gateway_run_unavailable) for every local approval.
     #
-    # The old behaviour (no mirroring) was restored: the callback only pushes the
-    # approval via SSE, which is sufficient for the in-process agent path (legacy mode).
-    sed -i '/if _submit_pending_for_polling is not None:/,/logger.warning(/d' api/streaming.py
+    # Ref: https://github.com/dbeley/hermes-webui-nix/issues
+
+    # Add submit_pending import alongside existing route_approvals imports
+    sed -i '/_approval_sse_notify_locked as _approval_sse_notify_locked,/a\                    submit_pending as _submit_webui_pending,' api/streaming.py
+
+    # Add submit_pending call before put('approval', ...) in the notify callback
+    sed -i '/def _approval_notify_cb(approval_data):/a\                _submit_webui_pending(session_id, approval_data)' api/streaming.py
   '';
 
   installPhase = ''
