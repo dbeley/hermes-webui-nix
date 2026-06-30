@@ -29,6 +29,17 @@ in
       description = "TCP port for the WebUI server to listen on.";
     };
 
+    enableGateway = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Whether to enable the Hermes Gateway user service.
+        The gateway handles cron jobs and messaging platform integrations
+        (Telegram, Discord, Slack, etc.). Requires the NixOS module's
+        services.hermes-webui.enableGateway to also be set.
+      '';
+    };
+
     passwordFile = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
@@ -52,13 +63,46 @@ in
     agentPackage = lib.mkOption {
       type = lib.types.package;
       default = hermesAgent;
-      defaultText = lib.literalExpression "llm-agents.packages.\${pkgs.system}.hermes-agent";
+      defaultText = lib.literalExpression "llm-agents.packages.\\${pkgs.system}.hermes-agent";
       description = "The hermes-agent package to use.";
     };
   };
 
   config = lib.mkIf cfg.enable {
     home.packages = [ cfg.agentPackage ];
+
+    # Gateway service — defined here (Home Manager) so systemd user service
+    # enable symlinks (default.target.wants/) are created correctly at activation.
+    # The NixOS module provides the complementary enableGateway option and
+    # handles system-level setup (firewall, user lingering).
+    systemd.user.services.hermes-gateway = lib.mkIf cfg.enableGateway {
+      Unit = {
+        Description = "Hermes Agent Gateway - Messaging Platform Integration";
+        After = [ "network-online.target" ];
+        Wants = [ "network-online.target" ];
+        StartLimitIntervalSec = 0;
+      };
+      Install = {
+        WantedBy = [ "default.target" ];
+      };
+      Service = {
+        Type = "simple";
+        Environment = [
+          "PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:%h/.nix-profile/bin"
+          "HERMES_HOME=%h/.hermes"
+        ];
+        WorkingDirectory = "%h/.hermes";
+        ExecStart = "${cfg.agentPackage}/bin/hermes gateway run";
+        ExecReload = "/bin/kill -USR1 $MAINPID";
+        Restart = "always";
+        RestartSec = 5;
+        TimeoutStopSec = 210;
+        KillMode = "mixed";
+        KillSignal = "SIGTERM";
+        StandardOutput = "journal";
+        StandardError = "journal";
+      };
+    };
 
     systemd.user.services.hermes-webui = {
       Unit = {
