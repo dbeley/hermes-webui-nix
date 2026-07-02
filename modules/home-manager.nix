@@ -116,8 +116,8 @@ in
         Environment = [
           "HERMES_WEBUI_HOST=${cfg.host}"
           "HERMES_WEBUI_PORT=${toString cfg.port}"
-          "HERMES_WEBUI_AGENT_DIR=${cfg.agentPackage.src}"
-          "PYTHONPATH=${cfg.agentPackage.src}"
+          "HERMES_WEBUI_AGENT_DIR=${cfg.agentPackage}/${pkgs.python3.sitePackages}"
+          "PYTHONPATH=${cfg.agentPackage}/${pkgs.python3.sitePackages}"
           "PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:%h/.nix-profile/bin"
         ];
         ExecStart =
