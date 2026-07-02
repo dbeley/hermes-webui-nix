@@ -12,6 +12,20 @@ let
   hermesAgent = llm.hermes-agent;
 
   hermes-webui = pkgs.callPackage ../pkgs/hermes-webui.nix { };
+
+  # Site-packages path for the hermes agent (where gateway.cgroup_cleanup lives)
+  hermesSitePackages = "${cfg.agentPackage}/${pkgs.python3.sitePackages}";
+
+  # Wrapper for ExecStopPost — runs gateway.cgroup_cleanup with the correct
+  # PYTHONPATH so Python can find the module on NixOS (where site-packages
+  # are not on the default search path).
+  cgroupCleanup = pkgs.writeShellScript "hermes-cgroup-cleanup" ''
+    export PYTHONPATH="${hermesSitePackages}:$PYTHONPATH"
+    exec ${pkgs.python3}/bin/python3 -m gateway.cgroup_cleanup "$@"
+  '';
+
+  # Helper to check if syncUnit is enabled (we need it for the activation script)
+  syncUnitEnabled = cfg.enableGateway && cfg.syncUnit;
 in
 {
   options.services.hermes-webui = {
@@ -66,6 +80,26 @@ in
       defaultText = lib.literalExpression "llm-agents.packages.\\${pkgs.system}.hermes-agent";
       description = "The hermes-agent package to use.";
     };
+
+    syncUnit = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Whether to synchronise the gateway systemd unit with the exact template
+        that `hermes gateway status` expects, by regenerating it after every
+        home-manager activation.
+
+        Hermes generates its systemd unit using runtime values (python path,
+        current PATH, resolved HERMES_HOME) that cannot be reproduced statically
+        in a Nix module. When enabled, an activation hook runs `hermes gateway
+        install --force --no-start-now` after the Nix-managed unit has been
+        written, overwriting it with the exact expected content.
+
+        This eliminates the "⚠ Installed gateway service definition is outdated"
+        warning from `hermes gateway status` on NixOS, at the cost of the unit
+        being a flat file (not a Nix store symlink) until the next rebuild.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -94,8 +128,10 @@ in
         WorkingDirectory = "%h/.hermes";
         ExecStart = "${cfg.agentPackage}/bin/hermes gateway run";
         ExecReload = "/bin/kill -USR1 $MAINPID";
+        ExecStopPost = "-${cgroupCleanup}";
         Restart = "always";
         RestartSec = 5;
+        RestartForceExitStatus = [ "75" ];
         TimeoutStopSec = 210;
         KillMode = "mixed";
         KillSignal = "SIGTERM";
@@ -103,6 +139,25 @@ in
         StandardError = "journal";
       };
     };
+
+    # Activation hook — sync the gateway unit file with the exact template
+    # that `hermes gateway status` compares against, to eliminate the
+    # "outdated service definition" warning.
+    #
+    # On NixOS the unit file is a symlink into the read-only Nix store, so
+    # we must remove it first before letting hermes install its generated
+    # flat file.
+    home.activation.syncHermesGatewayUnit = lib.mkIf syncUnitEnabled (
+      lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+        _unit="$HOME/.config/systemd/user/hermes-gateway.service"
+        if [ -L "$_unit" ]; then
+          rm -f "$_unit"
+        fi
+        if ! ${cfg.agentPackage}/bin/hermes gateway install --force --no-start-now 2>&1; then
+          echo "hermes-webui: warning: failed to sync gateway unit (non-fatal)" >&2
+        fi
+      ''
+    );
 
     systemd.user.services.hermes-webui = {
       Unit = {
