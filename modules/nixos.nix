@@ -55,24 +55,5 @@ in
   config = lib.mkIf cfg.enable {
     networking.firewall.allowedTCPPorts = [ cfg.port ];
     users.users.${cfg.user}.linger = true;
-
-    systemd.user.services.hermes-gateway = lib.mkIf cfg.enableGateway {
-      unitConfig = {
-        Description = "Hermes Gateway (cron jobs, messaging)";
-        After = [ "network-online.target" ];
-        Wants = [ "network-online.target" ];
-      };
-      wantedBy = [ "default.target" ];
-      serviceConfig = {
-        Type = "simple";
-        Environment = [
-          "PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:%h/.nix-profile/bin"
-          "HERMES_HOME=%h/.hermes"
-        ];
-        ExecStart = "${cfg.agentPackage}/bin/hermes gateway run";
-        Restart = "always";
-        RestartSec = 5;
-      };
-    };
   };
 }
