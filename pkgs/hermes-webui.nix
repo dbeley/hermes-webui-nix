@@ -42,6 +42,15 @@ stdenv.mkDerivation (finalAttrs: {
 
   installPhase = ''
     runHook preInstall
+
+    # Verify the approval patch was applied. The grep target is the comment
+    # we added after the submit_pending import — if it's missing the patch
+    # failed silently.
+    grep -q 'submit_pending as _submit_webui_pending' api/streaming.py || {
+      echo "ERROR: approval patch failed — _submit_webui_pending not found in api/streaming.py" >&2
+      exit 1
+    }
+
     mkdir -p $out/{bin,share/hermes-webui}
     cp -r api static server.py bootstrap.py requirements.txt $out/share/hermes-webui/
     makeWrapper ${hermes-webui-python}/bin/python3 $out/bin/hermes-webui \
