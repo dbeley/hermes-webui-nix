@@ -100,7 +100,11 @@ in
         WorkingDirectory = "%h/.hermes";
         ExecStart = "${cfg.agentPackage}/bin/hermes gateway run";
         ExecReload = "/bin/kill -USR1 $MAINPID";
+        ExecStopPost = "-${cfg.agentPackage}/bin/python -m gateway.cgroup_cleanup";
         Restart = "always";
+        RestartForceExitStatus = [
+          75
+        ];
         RestartSec = 5;
         TimeoutStopSec = 210;
         KillMode = "mixed";
