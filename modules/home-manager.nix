@@ -69,7 +69,13 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    home.packages = [ cfg.agentPackage ];
+    home.packages = [
+      cfg.agentPackage
+      pkgs.agent-browser
+      pkgs.docker
+      pkgs.nodejs
+      pkgs.ripgrep
+    ];
 
     # Gateway service — defined here (Home Manager) so systemd user service
     # enable symlinks (default.target.wants/) are created correctly at activation.
