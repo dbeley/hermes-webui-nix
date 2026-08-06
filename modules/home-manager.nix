@@ -66,6 +66,19 @@ in
       defaultText = lib.literalExpression "llm-agents.packages.\\${pkgs.system}.hermes-agent";
       description = "The hermes-agent package to use.";
     };
+
+    environmentFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "$HOME/.config/hermes/env";
+      description = ''
+        Path to a file with <literal>KEY=VALUE</literal> lines loaded as
+        environment for both the WebUI and Gateway user services (systemd
+        <literal>EnvironmentFile=</literal>). Use a sops-managed runtime path,
+        not a Nix store path, to keep secrets out of the store. Takes
+        precedence over <option>extraEnv</option> for any duplicated variable.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -96,7 +109,8 @@ in
         Environment = [
           "PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:%h/.nix-profile/bin"
           "HERMES_HOME=%h/.hermes"
-        ];
+        ]
+        EnvironmentFile = lib.mkIf (cfg.environmentFile != null) cfg.environmentFile;
         WorkingDirectory = "%h/.hermes";
         ExecStart = "${cfg.agentPackage}/bin/hermes gateway run";
         ExecReload = "/bin/kill -USR1 $MAINPID";
@@ -129,7 +143,8 @@ in
           "HERMES_WEBUI_AGENT_DIR=${cfg.agentPackage}/${pkgs.python3.sitePackages}"
           "PYTHONPATH=${cfg.agentPackage}/${pkgs.python3.sitePackages}"
           "PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:%h/.nix-profile/bin"
-        ];
+        ]
+        EnvironmentFile = lib.mkIf (cfg.environmentFile != null) cfg.environmentFile;
         ExecStart =
           let
             startScript = pkgs.writeShellScript "hermes-webui-start" ''
