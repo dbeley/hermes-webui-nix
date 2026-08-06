@@ -109,7 +109,7 @@ in
         Environment = [
           "PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:%h/.nix-profile/bin"
           "HERMES_HOME=%h/.hermes"
-        ]
+        ];
         EnvironmentFile = lib.mkIf (cfg.environmentFile != null) cfg.environmentFile;
         WorkingDirectory = "%h/.hermes";
         ExecStart = "${cfg.agentPackage}/bin/hermes gateway run";
@@ -143,7 +143,7 @@ in
           "HERMES_WEBUI_AGENT_DIR=${cfg.agentPackage}/${pkgs.python3.sitePackages}"
           "PYTHONPATH=${cfg.agentPackage}/${pkgs.python3.sitePackages}"
           "PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:%h/.nix-profile/bin"
-        ]
+        ];
         EnvironmentFile = lib.mkIf (cfg.environmentFile != null) cfg.environmentFile;
         ExecStart =
           let
