@@ -142,6 +142,7 @@ in
           "HERMES_WEBUI_PORT=${toString cfg.port}"
           "HERMES_WEBUI_AGENT_DIR=${cfg.agentPackage}/${pkgs.python3.sitePackages}"
           "PYTHONPATH=${cfg.agentPackage}/${pkgs.python3.sitePackages}"
+          "HERMES_BUNDLED_PLUGINS=${cfg.agentPackage}/share/hermes/plugins"
           "PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:%h/.nix-profile/bin"
         ];
         EnvironmentFile = lib.mkIf (cfg.environmentFile != null) cfg.environmentFile;
