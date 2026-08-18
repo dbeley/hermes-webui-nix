@@ -12,6 +12,60 @@ let
   hermesAgent = llm.hermes-agent;
 
   hermes-webui = pkgs.callPackage ../pkgs/hermes-webui.nix { };
+
+  # Build a Python env that includes the agent's dependencies plus any
+  # extra packages (e.g. mnemosyne, sqlite-vec) so that memory-provider
+  # plugins can import them at runtime.
+  agentPythonEnv = pkgs.python3.withPackages (
+    ps:
+    (map (p: ps.${p}) cfg.extraPythonPackageNames)
+    ++ cfg.extraPythonPackages
+  );
+
+  # When extraPythonPackages is non-empty, create a derivation that:
+  #   1. Copies the entire agent package (so bin/, share/, lib/ are preserved)
+  #   2. Wraps .hermes-wrapped (the real ELF/binary) with HERMES_PYTHON set
+  #      to the custom Python env.  This avoids the upstream hermes script
+  #      overwriting the value (it does an unconditional `export HERMES_PYTHON=…`).
+  #   3. Replaces the `hermes` bin entry with a thin shell script that
+  #      execs the wrapped binary, so callers (systemd, CLI) see the same
+  #      `hermes` command.
+  wrappedAgent =
+    if cfg.extraPythonPackages == [] && cfg.extraPythonPackageNames == [] then
+      cfg.agentPackage
+    else
+      pkgs.runCommand "hermes-agent-wrapped"
+        {
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+          preferLocalBuild = true;
+        }
+        ''
+          mkdir -p $out/bin
+
+          # Copy everything from the original package (lib/, share/, etc.)
+          cp -a ${cfg.agentPackage}/* $out/ 2>/dev/null || true
+
+          # Ensure bin/ exists
+          mkdir -p $out/bin
+          for f in ${cfg.agentPackage}/bin/*; do
+            ln -sf "$f" $out/bin/$(basename "$f")
+          done
+
+          # Wrap .hermes-wrapped directly — this is the actual binary/script
+          # that the hermes wrapper calls.  By setting HERMES_PYTHON here,
+          # we guarantee it takes precedence over the upstream script's export.
+          wrapProgram $out/bin/.hermes-wrapped \
+            --set HERMES_PYTHON "${agentPythonEnv}/bin/python3"
+
+          # Replace the `hermes` entry point with a simple exec wrapper.
+          # The upstream hermes script does `export HERMES_PYTHON=…` which
+          # would override our value, so we bypass it entirely.
+          cat > $out/bin/hermes <<'WRAPPER'
+          #! ${pkgs.bash}/bin/bash
+          exec -a "hermes" "''${BASH_SOURCE[0]%/*}/.hermes-wrapped" "$@"
+          WRAPPER
+          chmod +x $out/bin/hermes
+        '';
 in
 {
   options.services.hermes-webui = {
@@ -79,11 +133,35 @@ in
         precedence over <option>extraEnv</option> for any duplicated variable.
       '';
     };
+
+    extraPythonPackages = lib.mkOption {
+      type = lib.types.listOf lib.types.raw;
+      default = [];
+      example = lib.literalExpression "with pkgs.python3Packages; [ mnemosyne sqlite-vec ]";
+      description = ''
+        Additional Python packages to include in the agent's Python
+        environment.  Use this for memory-provider plugins (e.g. Mnemosyne)
+        or other optional dependencies that need to be importable at runtime.
+        Each element should be a Python package derivation.
+      '';
+    };
+
+    extraPythonPackageNames = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [];
+      example = lib.literalExpression "[ \"mnemosyne\" \"sqlite-vec\" ]";
+      description = ''
+        Additional Python package names (attribute names under
+        <literal>pkgs.python3Packages</literal>) to include in the agent's
+        Python environment.  Convenience option for simple cases where you
+        just need to name packages by their nixpkgs attribute.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
     home.packages = [
-      cfg.agentPackage
+      wrappedAgent
       pkgs.agent-browser
       pkgs.docker
       pkgs.nodejs
@@ -112,9 +190,9 @@ in
         ];
         EnvironmentFile = lib.mkIf (cfg.environmentFile != null) cfg.environmentFile;
         WorkingDirectory = "%h/.hermes";
-        ExecStart = "${cfg.agentPackage}/bin/hermes gateway run";
+        ExecStart = "${wrappedAgent}/bin/hermes gateway run";
         ExecReload = "/bin/kill -USR1 $MAINPID";
-        ExecStopPost = "-${cfg.agentPackage}/bin/python -m gateway.cgroup_cleanup";
+        ExecStopPost = "-${wrappedAgent}/bin/python -m gateway.cgroup_cleanup";
         Restart = "always";
         RestartForceExitStatus = [
           75
@@ -140,9 +218,9 @@ in
         Environment = [
           "HERMES_WEBUI_HOST=${cfg.host}"
           "HERMES_WEBUI_PORT=${toString cfg.port}"
-          "HERMES_WEBUI_AGENT_DIR=${cfg.agentPackage}/${pkgs.python3.sitePackages}"
-          "PYTHONPATH=${cfg.agentPackage}/${pkgs.python3.sitePackages}"
-          "HERMES_BUNDLED_PLUGINS=${cfg.agentPackage}/share/hermes/plugins"
+          "HERMES_WEBUI_AGENT_DIR=${wrappedAgent}/${pkgs.python3.sitePackages}"
+          "PYTHONPATH=${wrappedAgent}/${pkgs.python3.sitePackages}"
+          "HERMES_BUNDLED_PLUGINS=${wrappedAgent}/share/hermes/plugins"
           "PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:%h/.nix-profile/bin"
         ];
         EnvironmentFile = lib.mkIf (cfg.environmentFile != null) cfg.environmentFile;
@@ -154,7 +232,7 @@ in
                   export HERMES_WEBUI_PASSWORD=$(cat "${cfg.passwordFile}")
                 fi
               ''}
-              HERMES_PYTHON=$(grep -oP "HERMES_PYTHON='\K[^']+" ${cfg.agentPackage}/bin/hermes 2>/dev/null || true)
+              HERMES_PYTHON=$(grep -oP "HERMES_PYTHON='\K[^']+" ${wrappedAgent}/bin/hermes 2>/dev/null || true)
               if [ -n "$HERMES_PYTHON" ] && [ -x "$HERMES_PYTHON" ]; then
                 cd ${cfg.package}/share/hermes-webui
                 exec "$HERMES_PYTHON" server.py
