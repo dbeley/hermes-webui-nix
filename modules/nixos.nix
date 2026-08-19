@@ -50,6 +50,30 @@ in
         The hermes-agent package to use for the gateway service.
       '';
     };
+
+    extraPythonPackages = lib.mkOption {
+      type = lib.types.listOf lib.types.raw;
+      default = [];
+      example = lib.literalExpression "with pkgs.python3Packages; [ mnemosyne sqlite-vec ]";
+      description = ''
+        Additional Python packages to include in the agent's Python
+        environment.  Use this for memory-provider plugins (e.g. Mnemosyne)
+        or other optional dependencies that need to be importable at runtime.
+        Each element should be a Python package derivation.
+      '';
+    };
+
+    extraPythonPackageNames = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [];
+      example = lib.literalExpression "[ \"mnemosyne\" \"sqlite-vec\" ]";
+      description = ''
+        Additional Python package names (attribute names under
+        <literal>pkgs.python3Packages</literal>) to include in the agent's
+        Python environment.  Convenience option for simple cases where you
+        just need to name packages by their nixpkgs attribute.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
