@@ -79,6 +79,30 @@ in
         precedence over <option>extraEnv</option> for any duplicated variable.
       '';
     };
+
+    removeStaleDropins = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Whether to purge unmanaged drop-ins for the two systemd user units this
+        module owns (hermes-webui and hermes-gateway) on every activation.
+
+        Systemd applies any file found in a unit's
+        <filename>~/.config/systemd/user/<replaceable>unit</replaceable>.service.d/</filename>
+        directory on top of the unit, and neither Home Manager nor NixOS manage
+        that directory.  A stale, hand-written drop-in therefore survives every
+        switch and silently overrides the declared
+        <literal>Environment=PYTHONPATH=</literal> with hardcoded Nix store
+        paths. When the agent package is bumped, that can inject an old
+        hermes-agent's <filename>site-packages</filename> into a newer
+        hermes-webui process and crash it with e.g.
+        <literal>cannot import name 'mkdir_under_hermes_home'</literal>.
+
+        Since this module declares the complete service, unmanaged drop-ins are
+        treated as stale state and removed. Disable only if you deliberately
+        add your own drop-ins for these two units.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -112,7 +136,20 @@ in
         ];
         EnvironmentFile = lib.mkIf (cfg.environmentFile != null) cfg.environmentFile;
         WorkingDirectory = "%h/.hermes";
-        ExecStart = "${cfg.agentPackage}/bin/hermes gateway run";
+        # Run through a start script so the declared environment always wins:
+        # systemd drops any <unit>.service.d/ drop-in on top of the unit, but
+        # an export here is applied last and cannot be overridden. The agent
+        # resolves its own modules via HERMES_PYTHON_SRC_ROOT (set by the
+        # wrapper), so a stale PYTHONPATH is never needed — unset it to avoid
+        # shadowing modules with old store paths.
+        ExecStart =
+          let
+            startScript = pkgs.writeShellScript "hermes-gateway-start" ''
+              unset PYTHONPATH 2>/dev/null || true
+              exec "${cfg.agentPackage}/bin/hermes" gateway run
+            '';
+          in
+          "${startScript}";
         ExecReload = "/bin/kill -USR1 $MAINPID";
         ExecStopPost = "-${cfg.agentPackage}/bin/python -m gateway.cgroup_cleanup";
         Restart = "always";
@@ -149,6 +186,16 @@ in
         ExecStart =
           let
             startScript = pkgs.writeShellScript "hermes-webui-start" ''
+              # The declared environment is authoritative: re-export it here so
+              # a stale <unit>.service.d/ drop-in can never override it (drop-in
+              # Environment= wins over the unit's own, but an export in the
+              # start script wins over both). See removeStaleDropins.
+              export HERMES_WEBUI_HOST="${cfg.host}"
+              export HERMES_WEBUI_PORT=${toString cfg.port}
+              export HERMES_WEBUI_AGENT_DIR="${cfg.agentPackage}/${pkgs.python3.sitePackages}"
+              export PYTHONPATH="${cfg.agentPackage}/${pkgs.python3.sitePackages}"
+              export HERMES_BUNDLED_PLUGINS="${cfg.agentPackage}/share/hermes/plugins"
+
               ${lib.optionalString (cfg.passwordFile != null) ''
                 if [ -f "${cfg.passwordFile}" ]; then
                   export HERMES_WEBUI_PASSWORD=$(cat "${cfg.passwordFile}")
@@ -168,5 +215,27 @@ in
         RestartSec = 10;
       };
     };
+
+    # Stale drop-in purge. This removes any leftover hand-written drop-in
+    # (e.g. from a pre-module era that injected PYTHONPATH) that would silently
+    # override the declared environment above and mix store paths of different
+    # hermes-agent versions. Runs after Home Manager has synced/reloaded units.
+    home.activation.hermesWebuiPurgeStaleDropins = lib.mkIf cfg.removeStaleDropins (
+      lib.hm.dag.entryAfter [ "reloadSystemd" ] ''
+        _purged=0
+        for _u in hermes-webui hermes-gateway; do
+          _d="$HOME/.config/systemd/user/$_u.service.d"
+          if [ -d "$_d" ] && [ -n "$(ls -A "$_d" 2>/dev/null || true)" ]; then
+            rm -f "$_d"/*
+            rmdir "$_d" 2>/dev/null || true
+            _purged=1
+          fi
+        done
+        if [ "$_purged" = 1 ]; then
+          systemctl --user daemon-reload 2>/dev/null || true
+          systemctl --user try-restart hermes-webui hermes-gateway 2>/dev/null || true
+        fi
+      ''
+    );
   };
 }

@@ -52,6 +52,7 @@ No build system beyond `nix build` / `nix flake check`. No tests.
 | `passwordFile` | nullOr str | null | Runtime path, not store |
 | `package` | package | this flake | |
 | `agentPackage` | package | from llm-agents | |
+| `removeStaleDropins` | bool | true | Purge unmanaged `*.service.d/` drop-ins for both units on activation |
 
 ## Flake Outputs
 
@@ -83,6 +84,26 @@ nix shell nixpkgs#nix-update -c nix-update --build hermes-webui
 ## Patch Note
 
 The package applies a `sed` patch to `api/streaming.py` fixing an approval routing bug. If version bumps break the patch, it fails **silently** — the `installPhase` now validates the patch was applied, so a broken patch causes a build failure.
+
+## Known Pitfall: systemd user drop-ins
+
+The two units this module owns (`hermes-webui`, `hermes-gateway`) are fully declarative: Home Manager regenerates the main unit files with the current store paths on every switch. **However**, systemd merges any file found in `~/.config/systemd/user/<unit>.service.d/` on top of the unit, and neither Home Manager nor NixOS manage that directory. A hand-written drop-in (e.g. one that historically injected `PYTHONPATH=` with old store paths) therefore survives every switch and silently overrides the unit's `Environment=`.
+
+The symptom is a mixed-version crash after an agent bump, e.g.:
+
+```
+ImportError: cannot import name 'mkdir_under_hermes_home' from 'hermes_constants'
+(/nix/store/<old>-hermes-agent-.../site-packages/hermes_constants.py)
+```
+
+(`hermes_logging.py` from the new package imports a helper the old `hermes_constants.py` doesn't have.)
+
+Defences in the module:
+- `removeStaleDropins` (default true): an activation step purges `hermes-webui.service.d/` and `hermes-gateway.service.d/` and restarts the units if anything was removed.
+- The WebUI start script **re-exports** `PYTHONPATH`, `HERMES_WEBUI_AGENT_DIR` and `HERMES_BUNDLED_PLUGINS` after systemd has applied drop-ins, so the declared values are authoritative even between activations.
+- The Gateway start script `unset`s `PYTHONPATH` — the agent resolves its modules via `HERMES_PYTHON_SRC_ROOT`, so a polluted path can never shadow them.
+
+Disable `removeStaleDropins` only if you deliberately add your own drop-ins to these units.
 
 ## Notes for Maintainers
 
