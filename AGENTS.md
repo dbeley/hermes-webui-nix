@@ -53,6 +53,8 @@ No build system beyond `nix build` / `nix flake check`. No tests.
 | `package` | package | this flake | |
 | `agentPackage` | package | from llm-agents | |
 | `removeStaleDropins` | bool | true | Purge unmanaged `*.service.d/` drop-ins for both units on activation |
+| `browser.local.enable` | bool | false | Add nixpkgs chromium + `AGENT_BROWSER_EXECUTABLE_PATH` for tool browser / browser-cdp |
+| `browser.local.executable` | nullOr str | null | Override the browser binary (e.g. unfree Google Chrome); skips the chromium dep |
 
 ## Flake Outputs
 
@@ -104,6 +106,18 @@ Defences in the module:
 - The Gateway start script `unset`s `PYTHONPATH` — the agent resolves its modules via `HERMES_PYTHON_SRC_ROOT`, so a polluted path can never shadow them.
 
 Disable `removeStaleDropins` only if you deliberately add your own drop-ins to these units.
+
+## Local browser tools
+
+The local "tool browser" / `browser-cdp` tools require a Chromium binary. Hermes
+discovers one via `AGENT_BROWSER_EXECUTABLE_PATH` → `chromium`/`google-chrome`
+on `PATH` → the Playwright cache; without one the tools are hidden. Enable via
+`services.hermes-webui.browser.local.enable` (adds nixpkgs `chromium` and sets
+`AGENT_BROWSER_EXECUTABLE_PATH` on both units), or point
+`browser.local.executable` at an existing browser to avoid the chromium
+dependency. Headless mode works, so this is fine on servers/VMs. The cloud
+`browser-use` provider is unrelated (needs a `BROWSER_USE_API_KEY`, no local
+browser).
 
 ## Notes for Maintainers
 

@@ -12,6 +12,23 @@ let
   hermesAgent = llm.hermes-agent;
 
   hermes-webui = pkgs.callPackage ../pkgs/hermes-webui.nix { };
+
+  # Explicit executable wins; otherwise nixpkgs chromium. null → no local browser.
+  browserExecutable =
+    if cfg.browser.local.executable != null then
+      cfg.browser.local.executable
+    else if cfg.browser.local.enable then
+      "${pkgs.chromium}/bin/chromium"
+    else
+      null;
+
+  # Declared env that must be authoritative even if a stale systemd drop-in
+  # leaks Environment= values (see removeStaleDropins).
+  browserEnvEntry = lib.optional (browserExecutable != null)
+    "AGENT_BROWSER_EXECUTABLE_PATH=${browserExecutable}";
+  browserEnvExport = lib.optionalString (browserExecutable != null) ''
+    export AGENT_BROWSER_EXECUTABLE_PATH="${browserExecutable}"
+  '';
 in
 {
   options.services.hermes-webui = {
@@ -103,16 +120,52 @@ in
         add your own drop-ins for these two units.
       '';
     };
+
+    browser.local = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          Enable local Chromium browser tools (``tool browser`` / ``browser-cdp``).
+          This adds a Chromium build to the user environment and points the agent
+          at it via <envar>AGENT_BROWSER_EXECUTABLE_PATH</envar> on both the
+          WebUI and Gateway services, so the local browser tools are advertised
+          and usable.
+
+          Hermes discovers a browser via <envar>AGENT_BROWSER_EXECUTABLE_PATH</envar>,
+          then the <literal>chromium</literal>/<literal>google-chrome</literal>
+          binaries on <envar>PATH</envar>, then the Playwright browser cache.
+          Without a browser binary, the local browser tools are hidden
+          (<literal>tools/browser_tool.py:_chromium_installed</literal>). Headless
+          mode works, so this is fine on servers/VMs too.
+
+          The cloud <literal>browser-use</literal> provider is unrelated: it needs
+          a <envar>BROWSER_USE_API_KEY</envar> (or the Nous tool gateway) and no
+          local browser.
+        '';
+      };
+
+      executable = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = lib.literalExpression ''
+          "''${pkgs.google-chrome}/bin/google-chrome"
+        '';
+        description = ''
+          Path to the Chromium/Chrome executable to use. Defaults to
+          <literal>pkgs.chromium</literal> when <option>enable</option> is set.
+          Set this to point at an existing browser instead of adding chromium
+          as a dependency (e.g. an unfree Google Chrome).
+        '';
+      };
+    };
   };
 
   config = lib.mkIf cfg.enable {
-    home.packages = [
-      cfg.agentPackage
-      pkgs.agent-browser
-      pkgs.docker
-      pkgs.nodejs
-      pkgs.ripgrep
-    ];
+    home.packages =
+      [ cfg.agentPackage pkgs.agent-browser pkgs.docker pkgs.nodejs pkgs.ripgrep ]
+      ++ lib.optional (browserExecutable != null && cfg.browser.local.executable == null)
+        pkgs.chromium;
 
     # Gateway service — defined here (Home Manager) so systemd user service
     # enable symlinks (default.target.wants/) are created correctly at activation.
@@ -133,7 +186,7 @@ in
         Environment = [
           "PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:%h/.nix-profile/bin"
           "HERMES_HOME=%h/.hermes"
-        ];
+        ] ++ browserEnvEntry;
         EnvironmentFile = lib.mkIf (cfg.environmentFile != null) cfg.environmentFile;
         WorkingDirectory = "%h/.hermes";
         # Run through a start script so the declared environment always wins:
@@ -146,6 +199,7 @@ in
           let
             startScript = pkgs.writeShellScript "hermes-gateway-start" ''
               unset PYTHONPATH 2>/dev/null || true
+              ${browserEnvExport}
               exec "${cfg.agentPackage}/bin/hermes" gateway run
             '';
           in
@@ -181,7 +235,7 @@ in
           "PYTHONPATH=${cfg.agentPackage}/${pkgs.python3.sitePackages}"
           "HERMES_BUNDLED_PLUGINS=${cfg.agentPackage}/share/hermes/plugins"
           "PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:%h/.nix-profile/bin"
-        ];
+        ] ++ browserEnvEntry;
         EnvironmentFile = lib.mkIf (cfg.environmentFile != null) cfg.environmentFile;
         ExecStart =
           let
@@ -195,6 +249,7 @@ in
               export HERMES_WEBUI_AGENT_DIR="${cfg.agentPackage}/${pkgs.python3.sitePackages}"
               export PYTHONPATH="${cfg.agentPackage}/${pkgs.python3.sitePackages}"
               export HERMES_BUNDLED_PLUGINS="${cfg.agentPackage}/share/hermes/plugins"
+              ${browserEnvExport}
 
               ${lib.optionalString (cfg.passwordFile != null) ''
                 if [ -f "${cfg.passwordFile}" ]; then
