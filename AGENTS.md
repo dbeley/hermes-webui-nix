@@ -115,9 +115,38 @@ on `PATH` → the Playwright cache; without one the tools are hidden. Enable via
 `services.hermes-webui.browser.local.enable` (adds nixpkgs `chromium` and sets
 `AGENT_BROWSER_EXECUTABLE_PATH` on both units), or point
 `browser.local.executable` at an existing browser to avoid the chromium
-dependency. Headless mode works, so this is fine on servers/VMs. The cloud
-`browser-use` provider is unrelated (needs a `BROWSER_USE_API_KEY`, no local
-browser).
+dependency. Headless mode works, so this is fine on servers/VMs.
+
+The `browser-use` backend is a separate case: by default it runs the
+`agent-browser` CLI **locally** — the package this module already installs via
+`home.packages` — and only uses a cloud browser when `BROWSER_USE_API_KEY` is
+set. It needs no browser binary from `browser.local`, but it does need
+`agent-browser` on the service `PATH`.
+
+## Known Pitfall: the service `PATH` must include the Home Manager profile
+
+Both units set an explicit `PATH=`. Everything this module installs goes through
+`home.packages` (the Home Manager profile) — `agent-browser`, `nodejs`,
+`ripgrep`, `docker` — so **the profile directory must be first on that `PATH`**,
+otherwise those binaries are invisible to the agent.
+
+The failure is confusing on purpose: `browser_exec` returns
+`agent-browser CLI not found` and then falls back to
+`hermes pm install agent-browser`, which fails with
+`pm-runtime: packaged PM runtime is missing` (the Nix derivation ships no PM
+runtime). Meanwhile `hermes doctor` cheerfully reports
+`✓ agent-browser (/etc/profiles/per-user/<user>/bin/agent-browser)` — because
+doctor runs in the interactive shell, whose `PATH` does contain the profile.
+
+`servicePath` therefore starts with `${config.home.profileDirectory}/bin`, which
+resolves correctly however Home Manager is installed (system-wide submodule,
+`nix.useXdg`, or standalone). To confirm the services can see a binary:
+
+```bash
+tr '\0' '\n' < /proc/$(pgrep -f 'gateway run' | head -1)/environ \
+  | grep '^PATH=' | cut -c6- | tr ':' '\n'
+```
+
 
 ## Notes for Maintainers
 

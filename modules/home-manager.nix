@@ -22,6 +22,23 @@ let
     else
       null;
 
+  # The services must be able to see the binaries this module installs.
+  # `home.packages` below (agent-browser, nodejs, ripgrep, docker, …) land in the
+  # Home Manager profile, which is NOT on the PATH a systemd user service gets by
+  # default. Without it the agent cannot resolve agent-browser, falls back to
+  # `hermes pm install agent-browser`, and `browser_exec` fails with
+  # "agent-browser CLI not found" — even though `hermes doctor` reports the
+  # binary as present (doctor runs in the interactive shell, which has the full
+  # profile PATH). `home.profileDirectory` is the profile Home Manager actually
+  # writes to, whichever way it is installed (system-wide submodule,
+  # `nix.useXdg`, or standalone).
+  servicePath = lib.concatStringsSep ":" [
+    "${toString config.home.profileDirectory}/bin"
+    "/run/current-system/sw/bin"
+    "/nix/var/nix/profiles/default/bin"
+    "%h/.nix-profile/bin"
+  ];
+
   # Declared env that must be authoritative even if a stale systemd drop-in
   # leaks Environment= values (see removeStaleDropins).
   browserEnvEntry = lib.optional (browserExecutable != null)
@@ -139,9 +156,13 @@ in
           (<literal>tools/browser_tool.py:_chromium_installed</literal>). Headless
           mode works, so this is fine on servers/VMs too.
 
-          The cloud <literal>browser-use</literal> provider is unrelated: it needs
-          a <envar>BROWSER_USE_API_KEY</envar> (or the Nous tool gateway) and no
-          local browser.
+          The <literal>browser-use</literal> backend is a separate case: by
+          default it runs the <literal>agent-browser</literal> CLI locally (the
+          package this module already installs via <option>home.packages</option>)
+          and only reaches for a cloud browser when
+          <envar>BROWSER_USE_API_KEY</envar> is set. It needs no browser binary
+          from this option, but it does need <literal>agent-browser</literal> on
+          the service <envar>PATH</envar>.
         '';
       };
 
@@ -184,7 +205,7 @@ in
       Service = {
         Type = "simple";
         Environment = [
-          "PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:%h/.nix-profile/bin"
+          "PATH=${servicePath}"
           "HERMES_HOME=%h/.hermes"
         ] ++ browserEnvEntry;
         EnvironmentFile = lib.mkIf (cfg.environmentFile != null) cfg.environmentFile;
@@ -234,7 +255,7 @@ in
           "HERMES_WEBUI_AGENT_DIR=${cfg.agentPackage}/${pkgs.python3.sitePackages}"
           "PYTHONPATH=${cfg.agentPackage}/${pkgs.python3.sitePackages}"
           "HERMES_BUNDLED_PLUGINS=${cfg.agentPackage}/share/hermes/plugins"
-          "PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:%h/.nix-profile/bin"
+          "PATH=${servicePath}"
         ] ++ browserEnvEntry;
         EnvironmentFile = lib.mkIf (cfg.environmentFile != null) cfg.environmentFile;
         ExecStart =
