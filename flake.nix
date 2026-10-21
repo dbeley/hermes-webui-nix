@@ -35,6 +35,7 @@
         in
         {
           hermes-webui = pkgs.callPackage ./pkgs/hermes-webui.nix { };
+          hermes-agent = import ./pkgs/hermes-agent.nix { inherit llm-agents pkgs; };
           default = self.packages.${system}.hermes-webui;
         }
       );

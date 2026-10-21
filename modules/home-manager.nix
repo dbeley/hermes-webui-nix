@@ -8,8 +8,7 @@
 let
   cfg = config.services.hermes-webui;
 
-  llm = llm-agents.packages.${pkgs.system};
-  hermesAgent = llm.hermes-agent;
+  hermesAgent = import ../pkgs/hermes-agent.nix { inherit llm-agents pkgs; };
 
   hermes-webui = pkgs.callPackage ../pkgs/hermes-webui.nix { };
 

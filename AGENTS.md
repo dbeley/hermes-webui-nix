@@ -6,7 +6,8 @@
 
 ```
 ├── flake.nix                 # Entry point: packages, modules, overlays, apps
-├── pkgs/hermes-webui.nix     # Package derivation: fetch, patch, wrap
+├── pkgs/hermes-webui.nix     # Package derivation: fetch, install, wrap
+├── pkgs/hermes-agent.nix     # llm-agents hermes-agent + relaxed dep pins
 ├── modules/nixos.nix         # NixOS module: firewall, lingering
 ├── modules/home-manager.nix  # Home Manager module: user services, config
 ├── .github/workflows/        # CI: weekly auto-update with PR
@@ -23,13 +24,15 @@ No build system beyond `nix build` / `nix flake check`. No tests.
 
 ## Key Architecture
 
-1. **Package** (`pkgs/hermes-webui.nix`): Fetches upstream GitHub release, applies a `sed` patch to `api/streaming.py` (approval routing fix), wraps `server.py` with Python deps (`pyyaml`, `cryptography`).
+1. **Package** (`pkgs/hermes-webui.nix`): Fetches the upstream GitHub release and installs the same runtime tree upstream's own `nix/packages.nix` ships: `api/`, `static/`, `server.py`, `bootstrap.py`, `managed_agent_startup.py`, `mcp_server.py`, `requirements.txt`, plus a generated `api/_version.py`. Wrapped with Python deps (`pyyaml`, `cryptography`).
 
-2. **NixOS module** (`modules/nixos.nix`): Opens firewall port, enables user lingering.
+2. **Agent package** (`pkgs/hermes-agent.nix`): `llm-agents`' `hermes-agent` with two `pythonRelaxDeps` entries, because upstream pins `prompt_toolkit==3.0.52` / `markdown==3.10.2` while current nixpkgs ships newer patch versions and `pythonRuntimeDepsCheckHook` would abort the build.
 
-3. **Home Manager module** (`modules/home-manager.nix`): Defines `hermes-webui` and `hermes-gateway` systemd user services. The start script extracts `HERMES_PYTHON` from the agent's wrapper to reuse its Python environment.
+3. **NixOS module** (`modules/nixos.nix`): Opens firewall port, enables user lingering.
 
-4. **Runtime model:** WebUI extracts `HERMES_PYTHON` from the `hermes` CLI wrapper, then runs `server.py` with that interpreter — sharing the agent's Python environment instead of duplicating it.
+4. **Home Manager module** (`modules/home-manager.nix`): Defines `hermes-webui` and `hermes-gateway` systemd user services. The start script extracts `HERMES_PYTHON` from the agent's wrapper to reuse its Python environment.
+
+5. **Runtime model:** WebUI extracts `HERMES_PYTHON` from the `hermes` CLI wrapper, then runs `server.py` with that interpreter — sharing the agent's Python environment instead of duplicating it.
 
 ## Module Options
 
@@ -59,6 +62,7 @@ No build system beyond `nix build` / `nix flake check`. No tests.
 ## Flake Outputs
 
 - `packages.${system}.hermes-webui` — the package
+- `packages.${system}.hermes-agent` — the relaxed-pin agent package used by the modules
 - `apps.${system}.hermes-webui` — `nix run`
 - `nixosModules.default` / `nixosModules.hermes-webui`
 - `homeModules.default` / `homeModoles.hermes-webui`
@@ -83,9 +87,20 @@ nix flake update
 nix shell nixpkgs#nix-update -c nix-update --build hermes-webui
 ```
 
-## Patch Note
+## Upstream Patch Status
 
-The package applies a `sed` patch to `api/streaming.py` fixing an approval routing bug. If version bumps break the patch, it fails **silently** — the `installPhase` now validates the patch was applied, so a broken patch causes a build failure.
+No patches are applied to the WebUI sources any more. The one we carried until
+v0.51.653 (approval notify callback had to call `submit_pending`, otherwise every
+local approval answered HTTP 409 `gateway_run_unavailable`) is handled upstream
+since v0.52: `streaming.py`'s notify callback calls
+`settle_gateway_pending_local_notification()`, which binds the plugin-free
+"mirror" entry to the parked producer via `_GATEWAY_MIRROR_TOKEN`, and
+`_resolve_approval_legacy()` then routes the click through
+`resolve_gateway_pending_local()`. Re-adding the old `sed` patch now breaks
+approvals instead of fixing them (`_submit_webui_pending` no longer exists).
+
+If an install reports 409 on approval, compare `api/route_approvals.py` against
+current upstream before reintroducing a patch.
 
 ## Known Pitfall: systemd user drop-ins
 
@@ -151,6 +166,8 @@ tr '\0' '\n' < /proc/$(pgrep -f 'gateway run' | head -1)/environ \
 ## Notes for Maintainers
 
 - The `flake.lock` pins `llm-agents.nix` — version bumps of `hermes-webui` don't affect the agent version.
+- `pkgs/hermes-agent.nix` only relaxes two `==` pins. When `nix build .#hermes-agent` succeeds without it, delete the file, the `pkgs` lookup and the helper imports in both modules.
+- When bumping `hermes-webui`, diff the upstream release's top-level files against `installPhase`: new Python entry points (like `managed_agent_startup.py` in v0.52) must be installed or the server fails to import.
 - `passwordFile` is read at runtime (shell `cat` in the start script), keeping secrets out of the Nix store.
 - The start script's `HERMES_PYTHON` extraction (`grep -oP "HERMES_PYTHON='\K[^']+"`) depends on the `hermes` wrapper's internal format — fragile if the upstream agent changes its wrapper.
 - Supporting `x86_64-linux` and `aarch64-linux` only.
